@@ -179,8 +179,7 @@ class _LinearOperator(LinearOperator):
 
     @staticmethod
     def print_nonclose(array1: ndarray, array2: ndarray, rtol: float, atol: float):
-        """Check if the two arrays are element-wise equal within a tolerance and print
-        the entries that differ.
+        """Check element-wise equality of two arrays and print differing entries.
 
         Args:
             array1: First array for comparison.

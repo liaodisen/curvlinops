@@ -79,6 +79,23 @@ def lanczos_approximate_spectrum_from_iter(
     kappa: float,
     margin: float,
 ) -> Tuple[ndarray, ndarray]:
+    """Estimate the spectral density from Lanczos iterations.
+
+    Args:
+        lanczos_iter: Eigenvalues and eigenvectors of the tri-diagonal matrix built up
+            during Lanczos iterations. ``evecs[:, i]`` is normalized eigenvector of
+            ``evals[i]``.
+        boundaries: Estimates of the minimum and maximum eigenvalues used as boundaries
+            for the spectral density's grid.
+        num_points: Resolution of the spectral density's grid.
+        kappa: Width of the Gaussian bumps used as approximate delta peaks in the
+            grid normalized to ``[-1; 1]``. Must be positive.
+        margin: Relative padding added around the boundary values (half to the left,
+            half to the right).
+
+    Returns:
+        The grid and the approximated spectral density.
+    """
     eval_min, eval_max = boundaries
     _width = eval_max - eval_min
     _padding = margin * _width
