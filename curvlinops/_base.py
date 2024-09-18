@@ -597,7 +597,7 @@ class PyTorchLinearOperator:
                 The list must contain tensors of shape ``[*N1, K], [*N2, K], ...``,
                 where ``N1, N2, ...`` are the shapes of the linear operator's columns.
 
-        Returns:
+        Returns: # noqa: D402
             A list of tensors with shape ``[*M1, K], [*M2, K], ...``, where ``M1, M2,
             ...`` are the shapes of the linear operator's rows.
 
@@ -617,7 +617,7 @@ class PyTorchLinearOperator:
     def _adjoint(self) -> PyTorchLinearOperator:
         """Adjoint of the linear operator.
 
-        Returns:
+        Returns: # noqa: D402
             The adjoint of the linear operator.
 
         Raises:
