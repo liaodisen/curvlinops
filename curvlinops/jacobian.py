@@ -321,7 +321,7 @@ class TransposedJacobianLinearOperator(_LinearOperator):
         Returns:
             Matrix-multiplication result ``J^T @ M``. Has shape ``[D, K]``.
         """
-        M_torch = from_numpy(M).to(self._device)
+        M_torch = from_numpy(M).to(self.device)
         num_vectors = M_torch.shape[1]
 
         # allocate result tensors

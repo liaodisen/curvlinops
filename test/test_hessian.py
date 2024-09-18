@@ -63,7 +63,7 @@ def test_HessianLinearOperator_matmat(
         if scipy_frontend
         else rand(op.shape[1], num_vecs, dtype=op.dtype, device=op.device)
     )
-    report_nonclose(op @ X, op_functorch @ X, atol=1e-6, rtol=5e-4)
+    report_nonclose(op @ X, op_functorch @ X, atol=1e-6, rtol=1e-4)
 
 
 BLOCKING_FNS = {

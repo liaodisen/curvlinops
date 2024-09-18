@@ -35,15 +35,10 @@ def report_nonclose(
             f"Arrays shapes don't match: {array1.shape} vs. {array2.shape}."
         )
 
-    if isinstance(array1, Tensor) and isinstance(array2, Tensor):
+    if isinstance(array1, Tensor):
         allclose, isclose = torch_allclose, torch_isclose
-    elif isinstance(array1, ndarray) and isinstance(array2, ndarray):
+    elif isinstance(array1, ndarray):
         allclose, isclose = numpy_allclose, numpy_isclose
-    else:
-        raise ValueError(
-            "Both arrays should be either tensors or ndarrays."
-            f" Got {type(array1)} and {type(array2)}."
-        )
 
     if allclose(array1, array2, rtol=rtol, atol=atol, equal_nan=equal_nan):
         print("Compared arrays match.")

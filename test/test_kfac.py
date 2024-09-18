@@ -606,7 +606,7 @@ def test_torch_matmat(case):
         data,
         batch_size_fn=batch_size_fn,
     )
-    device = kfac._device
+    device = kfac.device
     # KFAC.dtype is a numpy data type
     dtype = next(kfac._model_func.parameters()).dtype
 
@@ -646,7 +646,7 @@ def test_torch_matvec(case):
         data,
         batch_size_fn=batch_size_fn,
     )
-    device = kfac._device
+    device = kfac.device
     # KFAC.dtype is a numpy data type
     dtype = next(kfac._model_func.parameters()).dtype
 

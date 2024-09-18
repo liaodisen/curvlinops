@@ -485,10 +485,8 @@ def test_KFAC_inverse_exactly_damped_matmat(
     # manual exactly damped inverse
     inv_KFAC_naive = (
         torch.inverse(
-            KFAC.torch_matmat(
-                torch.eye(KFAC.shape[0], dtype=dtype, device=KFAC._device)
-            )
-            + delta * torch.eye(KFAC.shape[0], dtype=dtype, device=KFAC._device)
+            KFAC.torch_matmat(torch.eye(KFAC.shape[0], dtype=dtype, device=KFAC.device))
+            + delta * torch.eye(KFAC.shape[0], dtype=dtype, device=KFAC.device)
         )
         .cpu()
         .numpy()
@@ -555,7 +553,7 @@ def test_KFAC_inverse_damped_torch_matmat(
     )
     KFAC.dtype = float64
     inv_KFAC = KFACInverseLinearOperator(KFAC, damping=(delta, delta))
-    device = KFAC._device
+    device = KFAC.device
 
     num_vectors = 2
     X = torch.rand(KFAC.shape[1], num_vectors, dtype=dtype, device=device)
@@ -618,7 +616,7 @@ def test_KFAC_inverse_damped_torch_matvec(
     )
     KFAC.dtype = float64
     inv_KFAC = KFACInverseLinearOperator(KFAC, damping=(delta, delta))
-    device = KFAC._device
+    device = KFAC.device
 
     x = torch.rand(KFAC.shape[1], dtype=dtype, device=device)
     inv_KFAC_x = inv_KFAC.torch_matvec(x)

@@ -276,7 +276,7 @@ class KFACLinearOperator(_LinearOperator):
         self._set_num_per_example_loss_terms(num_per_example_loss_terms)
 
         if check_deterministic:
-            old_device = self._device
+            old_device = self.device
             self.to_device(device("cpu"))
             try:
                 self._check_deterministic()
@@ -568,8 +568,8 @@ class KFACLinearOperator(_LinearOperator):
             )
 
         # loop over data set, computing the Kronecker factors
-        if self._generator is None or self._generator.device != self._device:
-            self._generator = Generator(device=self._device)
+        if self._generator is None or self._generator.device != self.device:
+            self._generator = Generator(device=self.device)
         self._generator.manual_seed(self._seed)
 
         for X, y in self._loop_over_data(desc="KFAC matrices"):
@@ -678,7 +678,7 @@ class KFACLinearOperator(_LinearOperator):
                 # just call `next(iter(param_pos.values()))` to get the first parameter.
                 param = self._params[next(iter(param_pos.values()))]
                 self._gradient_covariances[mod_name] = eye(
-                    param.shape[0], dtype=param.dtype, device=self._device
+                    param.shape[0], dtype=param.dtype, device=self.device
                 )
 
         else:
