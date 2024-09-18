@@ -9,7 +9,6 @@ from torch import block_diag, rand
 from curvlinops import HessianLinearOperator
 from curvlinops.examples.functorch import functorch_hessian
 from curvlinops.examples.utils import report_nonclose
-from curvlinops.hessian import HessianLinearOperator
 from curvlinops.utils import split_list
 
 
