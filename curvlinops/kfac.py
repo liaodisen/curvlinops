@@ -1223,7 +1223,7 @@ class KFACLinearOperator(_LinearOperator):
 
         # Potentially call `check_deterministic` after the state dict is loaded
         if check_deterministic:
-            old_device = kfac._device
+            old_device = kfac.device
             kfac.to_device(device("cpu"))
             try:
                 kfac._check_deterministic()

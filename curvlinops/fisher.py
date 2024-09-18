@@ -189,8 +189,8 @@ class FisherMCLinearOperator(_LinearOperator):
         Returns:
             Matrix-multiplication result ``mat @ M``.
         """
-        if self._generator is None or self._generator.device != self._device:
-            self._generator = Generator(device=self._device)
+        if self._generator is None or self._generator.device != self.device:
+            self._generator = Generator(device=self.device)
         self._generator.manual_seed(self._seed)
 
         return super()._matmat(M)
