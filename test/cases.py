@@ -371,3 +371,5 @@ for case in NON_DETERMINISTIC_CASES_NO_DEVICE:
         NON_DETERMINISTIC_CASES.append(case_with_device)
 
 ADJOINT_CASES = [False, True]
+
+SCIPY_FRONTEND_CASES = [False, True]

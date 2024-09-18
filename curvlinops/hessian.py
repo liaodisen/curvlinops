@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
-from typing import List, Tuple, Union
+from typing import Callable, Iterable, List, Tuple, Union
 
 from backpack.hessianfree.hvp import hessian_vector_product
 from torch import Tensor, zeros_like
 from torch.autograd import grad
+from torch.nn import Parameter
 
-from curvlinops._base import _LinearOperator
+from curvlinops._base import CurvatureLinearOperator
 from curvlinops.utils import split_list
 
 
-class HessianLinearOperator(_LinearOperator):
-    r"""Hessian as SciPy linear operator.
+class HessianLinearOperator(CurvatureLinearOperator):
+    r"""Linear operator for the Hessian of an empirical risk in PyTorch.
 
     Consider the empirical risk
 
@@ -41,15 +42,46 @@ class HessianLinearOperator(_LinearOperator):
 
     SUPPORTS_BLOCKS: bool = True
 
+    def __init__(
+        self,
+        model_func: Callable[[Tensor | MutableMapping], Tensor],
+        loss_func: Callable[[Tensor, Tensor], Tensor] | None,
+        params: List[Tensor | Parameter],
+        data: Iterable[Tuple[Tensor | MutableMapping, Tensor]],
+        progressbar: bool = False,
+        num_data: int | None = None,
+        in_blocks: List[int] | None = None,
+        out_blocks: List[int] | None = None,
+        batch_size_fn: Callable[[Tensor | MutableMapping], int] | None = None,
+    ):
+        in_shape = out_shape = [tuple(p.shape) for p in params]
+        (dt,) = {p.dtype for p in params}
+        (dev,) = {p.device for p in params}
+        super().__init__(
+            model_func,
+            loss_func,
+            params,
+            data,
+            in_shape,
+            out_shape,
+            dt,
+            dev,
+            progressbar=progressbar,
+            num_data=num_data,
+            in_blocks=in_blocks,
+            out_blocks=out_blocks,
+            batch_size_fn=batch_size_fn,
+        )
+
     def _matmat_batch(
-        self, X: Union[Tensor, MutableMapping], y: Tensor, M_list: List[Tensor]
-    ) -> Tuple[Tensor, ...]:
+        self, X: Union[Tensor, MutableMapping], y: Tensor, M: List[Tensor]
+    ) -> List[Tensor]:
         """Apply the mini-batch Hessian to a matrix.
 
         Args:
             X: Input to the DNN.
             y: Ground truth.
-            M_list: Matrix to be multiplied with in list format.
+            M: Matrix to be multiplied with in list format.
                 Tensors have same shape as trainable model parameters, and an
                 additional leading axis for the matrix columns.
 
@@ -58,29 +90,32 @@ class HessianLinearOperator(_LinearOperator):
             ``M_list``, i.e. each tensor in the list has the shape of a parameter and a
             leading dimension of matrix columns.
         """
+        assert self._loss_func is not None
         loss = self._loss_func(self._model_func(X), y)
 
         # Re-cycle first backward pass from the HVP's double-backward
-        grad_params = grad(loss, self._params, create_graph=True)
+        grad_params = list(grad(loss, self._params, create_graph=True))
 
-        num_vecs = M_list[0].shape[0]
-        result = [zeros_like(M) for M in M_list]
+        (num_vecs,) = {m.shape[-1] for m in M}
+        result = [zeros_like(m) for m in M]
+
+        assert self._in_blocks == self._out_blocks
 
         # per-block HMP
         for M_block, p_block, g_block, res_block in zip(
-            split_list(M_list, self._block_sizes),
-            split_list(self._params, self._block_sizes),
-            split_list(grad_params, self._block_sizes),
-            split_list(result, self._block_sizes),
+            split_list(M, self._in_blocks),
+            split_list(self._params, self._in_blocks),
+            split_list(grad_params, self._in_blocks),
+            split_list(result, self._in_blocks),
         ):
             for n in range(num_vecs):
                 col_n = hessian_vector_product(
-                    loss, p_block, [M[n] for M in M_block], grad_params=g_block
+                    loss, p_block, [m[..., n] for m in M_block], grad_params=g_block
                 )
                 for p, col in enumerate(col_n):
-                    res_block[p][n].add_(col)
+                    res_block[p][..., n].add_(col)
 
-        return tuple(result)
+        return result
 
     def _adjoint(self) -> HessianLinearOperator:
         """Return the linear operator representing the adjoint.

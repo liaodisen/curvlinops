@@ -8,6 +8,7 @@ from test.cases import (
     CNN_CASES,
     INV_CASES,
     NON_DETERMINISTIC_CASES,
+    SCIPY_FRONTEND_CASES,
 )
 from test.kfac_cases import (
     KFAC_EXACT_CASES,
@@ -112,6 +113,11 @@ def non_deterministic_case(
 
 @fixture(params=ADJOINT_CASES)
 def adjoint(request) -> bool:
+    return request.param
+
+
+@fixture(params=SCIPY_FRONTEND_CASES)
+def scipy_frontend(request) -> bool:
     return request.param
 
 

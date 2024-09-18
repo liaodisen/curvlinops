@@ -1,11 +1,18 @@
 """Utility functions for the examples in the documentation."""
 
-from numpy import allclose, isclose, ndarray
+from typing import Union
+
+from numpy import allclose as numpy_allclose
+from numpy import isclose as numpy_isclose
+from numpy import ndarray
+from torch import Tensor
+from torch import allclose as torch_allclose
+from torch import isclose as torch_isclose
 
 
 def report_nonclose(
-    array1: ndarray,
-    array2: ndarray,
+    array1: Union[ndarray, Tensor],
+    array2: Union[ndarray, Tensor],
     rtol: float = 1e-5,
     atol: float = 1e-8,
     equal_nan: bool = False,
@@ -26,6 +33,16 @@ def report_nonclose(
     if array1.shape != array2.shape:
         raise ValueError(
             f"Arrays shapes don't match: {array1.shape} vs. {array2.shape}."
+        )
+
+    if isinstance(array1, Tensor) and isinstance(array2, Tensor):
+        allclose, isclose = torch_allclose, torch_isclose
+    elif isinstance(array1, ndarray) and isinstance(array2, ndarray):
+        allclose, isclose = numpy_allclose, numpy_isclose
+    else:
+        raise ValueError(
+            "Both arrays should be either tensors or ndarrays."
+            f" Got {type(array1)} and {type(array2)}."
         )
 
     if allclose(array1, array2, rtol=rtol, atol=atol, equal_nan=equal_nan):

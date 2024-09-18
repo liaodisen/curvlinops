@@ -184,7 +184,7 @@ class ActivationHessianLinearOperator(_LinearOperator):
         num_vectors = M.shape[1]
         return [
             from_numpy(M.T)
-            .to(self._device)
+            .to(self.device)
             .reshape(num_vectors, *self._activation_shape)
         ]
 
