@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypeVar
 
 from einops import einsum, rearrange, reduce
 from numpy import ndarray
-from torch import Generator, Tensor, cat, device, eye, randn, stack
+from torch import Generator, Tensor, cat, device, eye, randn, stack, split, cat
 from torch.autograd import grad
 from torch.nn import (
     BCEWithLogitsLoss,
@@ -625,13 +625,17 @@ class KFACLinearOperator(_LinearOperator):
                 ``FisherType.FORWARD_ONLY``.
         """
         # if >2d output we convert to an equivalent 2d output
-        if isinstance(self._loss_func, (CrossEntropyLoss, CrossEntropyLossWeighted)):
+        if isinstance(self._loss_func, CrossEntropyLossWeighted):
+            output = rearrange(output, "batch c ... -> (batch ...) c")
+            y = rearrange(y, "batch c ... -> (batch ...) c")
+            _, data_idx = y.split([1, 1], dim=1)
+        elif isinstance(self._loss_func, CrossEntropyLoss):
             output = rearrange(output, "batch c ... -> (batch ...) c")
             y = rearrange(y, "batch ... -> (batch ...)")
         else:
             output = rearrange(output, "batch ... c -> (batch ...) c")
             y = rearrange(y, "batch ... c -> (batch ...) c")
-
+        
         if self._fisher_type == FisherType.TYPE2:
             # Compute per-sample Hessian square root, then concatenate over samples.
             # Result has shape `(batch_size, num_classes, num_classes)`
@@ -661,15 +665,15 @@ class KFACLinearOperator(_LinearOperator):
 
         elif self._fisher_type == FisherType.MC:
             for mc in range(self._mc_samples):
+
                 y_sampled = self.draw_label(output)  # shape (N,)
 
-                if isinstance(self, CrossEntropyLossWeighted):
+                if isinstance(self._loss_func, CrossEntropyLossWeighted):
                     # need shape (N, 2)
-                    _, data_idx = y_sampled.split([1, 1], dim=1)
+                    # _, data_idx = output.split([1, 1], dim=1)
                     data_idx = data_idx.squeeze(1)  # shape (N,)
 
                     y_sampled = stack([y_sampled, data_idx], dim=1)  # shape (N, 2)
-
                     # the normal loss is 1 / N \sum_i \sigma(v_i) \ell(f(x_i), y_i)
                     # KFAC's pseudo-loss is 1 / sqrt(N) \sum_i \sqrt(\sigma(v_i)) \ell(f(x_i), y_i)
                     original_reduction = self._loss_func.reduction
@@ -677,8 +681,9 @@ class KFACLinearOperator(_LinearOperator):
                     loss_unreduced = self._loss_func(output, y_sampled)
                     self._loss_func.reduction = original_reduction
 
+                    eps = 1e-8
                     sigma = self._loss_func.data_weights[data_idx].clamp(
-                        min=0.0, max=1.0
+                        min=eps, max=1.0
                     )
                     loss_scaled = loss_unreduced / sigma.sqrt()
 
@@ -757,8 +762,15 @@ class KFACLinearOperator(_LinearOperator):
                 generator=self._generator,
             )
             return output.clone().detach() + perturbation
-
-        elif isinstance(self._loss_func, (CrossEntropyLoss, CrossEntropyLossWeighted)):
+        
+        elif isinstance(self._loss_func, CrossEntropyLossWeighted):
+            probs = output.softmax(dim=1)
+            labels = probs.multinomial(
+                num_samples=1, generator=self._generator
+            ).squeeze(-1)
+            return labels
+        
+        elif isinstance(self._loss_func, CrossEntropyLoss):
             probs = output.softmax(dim=1)
             labels = probs.multinomial(
                 num_samples=1, generator=self._generator

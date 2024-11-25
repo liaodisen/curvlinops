@@ -40,5 +40,7 @@ class CrossEntropyLossWeighted(CrossEntropyLoss):
             return loss.sum()
         elif self.reduction == "mean":
             return loss.mean()
+        elif self.reduction == "none":
+            return loss
         else:
             raise ValueError
