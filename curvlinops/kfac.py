@@ -234,10 +234,10 @@ class KFACLinearOperator(_LinearOperator):
             ValueError: If ``fisher_type != FisherType.MC`` and ``mc_samples != 1``.
             ValueError: If ``X`` is not a tensor and ``batch_size_fn`` is not specified.
         """
-        if not isinstance(loss_func, self._SUPPORTED_LOSSES):
-            raise ValueError(
-                f"Invalid loss: {loss_func}. Supported: {self._SUPPORTED_LOSSES}."
-            )
+        # if not isinstance(loss_func, self._SUPPORTED_LOSSES):
+        #     raise ValueError(
+        #         f"Invalid loss: {loss_func}. Supported: {self._SUPPORTED_LOSSES}."
+        #     )
         if fisher_type not in self._SUPPORTED_FISHER_TYPE:
             raise ValueError(
                 f"Invalid fisher_type: {fisher_type}. "
@@ -248,7 +248,7 @@ class KFACLinearOperator(_LinearOperator):
                 f"Invalid mc_samples: {mc_samples}. "
                 "Only mc_samples=1 is supported for `fisher_type != FisherType.MC`."
             )
-        if kfac_approx not in self._SUPPORTED_KFAC_APPROX:
+        if kfac_approx not in self._SUPPORTED_KFAC_APPROX and fisher_type not in  [FisherType.EMPIRICAL, FisherType.FORWARD_ONLY]:
             raise ValueError(
                 f"Invalid kfac_approx: {kfac_approx}. "
                 f"Supported: {self._SUPPORTED_KFAC_APPROX}."
@@ -313,8 +313,10 @@ class KFACLinearOperator(_LinearOperator):
                     num_loss_terms += y.numel()
                 elif isinstance(self._loss_func, CrossEntropyLossWeighted):
                     num_loss_terms += y.numel() / 2
-                else:
+                elif isinstance(self._loss_func, MSELoss):
                     num_loss_terms += y.shape[:-1].numel()
+                else:
+                    num_loss_terms += y.numel()
 
             if num_loss_terms % self._N_data != 0:
                 raise ValueError(
@@ -632,9 +634,12 @@ class KFACLinearOperator(_LinearOperator):
         elif isinstance(self._loss_func, CrossEntropyLoss):
             output = rearrange(output, "batch c ... -> (batch ...) c")
             y = rearrange(y, "batch ... -> (batch ...)")
+        elif isinstance(self._loss_func, MSELoss):
+            output = rearrange(output, "batch c ... -> (batch ...) c")
+            y = rearrange(y, "batch ... -> (batch ...)")
         else:
             output = rearrange(output, "batch ... c -> (batch ...) c")
-            y = rearrange(y, "batch ... c -> (batch ...) c")
+            y = rearrange(y, "batch ... -> (batch ...)")
         
         if self._fisher_type == FisherType.TYPE2:
             # Compute per-sample Hessian square root, then concatenate over samples.
@@ -752,6 +757,7 @@ class KFACLinearOperator(_LinearOperator):
         """
         if output.ndim != 2:
             raise ValueError("Only a 2d output is supported.")
+    
 
         if isinstance(self._loss_func, MSELoss):
             std = sqrt(0.5)
@@ -1281,3 +1287,76 @@ class KFACLinearOperator(_LinearOperator):
                 kfac.to_device(old_device)
 
         return kfac
+
+    def exponential_moving_average(
+        self, other: KFACLinearOperator, beta: float
+    ) -> None:
+        """Incorporate the Kronecker matrices of another KFAC using EMA.
+
+        Updates the Kronecker factors of the current KFAC linear operator in-place.
+        For a Kronecker factor ``K``, the EMA is ``K ← β K + (1 - β) K_other``.
+
+        Args:
+            other: The other KFAC linear operator whose Kronecker factors are
+                incorporated.
+            beta: The EMA decay factor. Must be in ``[0, 1]``. ``1`` means the
+                Kronecker factors are not updated, and ``0`` means the Kronecker factors
+                are replaced by the other KFAC's Kronecker factors.
+
+        Raises:
+            ValueError: If ``beta`` is not in ``[0, 1]``.
+            ValueError: If the Kronecker factors have incompatible data formats.
+
+        """
+        if not 0 <= beta <= 1:
+            raise ValueError("Beta must be in [0, 1].")
+
+        # make sure both KFACs have computed the Kronecker matrices
+        if not self._input_covariances and not self._gradient_covariances:
+            self._compute_kfac()
+        if not other._input_covariances and not other._gradient_covariances:
+            other._compute_kfac()
+
+        # make sure the Kronecker matrices have the same keys and shapes
+        keys = set(self._input_covariances.keys())
+        other_keys = set(other._input_covariances.keys())
+        if keys != other_keys:
+            raise ValueError(
+                f"Input covariance keys do not match: {keys} != {other_keys}."
+            )
+        for key in keys:
+            aaT = self._input_covariances[key]
+            aaT_other = other._input_covariances[key]
+            if aaT.shape != aaT_other.shape:
+                raise ValueError(
+                    f"Input covariance shapes for {key!r} do not match:"
+                    f" {aaT.shape} != {aaT_other.shape}."
+                )
+
+        keys = set(self._gradient_covariances.keys())
+        other_keys = set(other._gradient_covariances.keys())
+        if keys != other_keys:
+            raise ValueError(
+                f"Gradient covariance keys do not match: {keys} != {other_keys}."
+            )
+        for key in keys:
+            ggT = self._gradient_covariances[key]
+            ggT_other = other._gradient_covariances[key]
+            if ggT.shape != ggT_other.shape:
+                raise ValueError(
+                    f"Gradient covariance shapes for {key!r} do not match:"
+                    f" {ggT.shape} != {ggT_other.shape}."
+                )
+
+        # apply exponential moving average
+        if self._input_covariances and self._gradient_covariances:
+            for key in self._input_covariances.keys():
+                self._input_covariances[key].mul_(beta).add_(
+                    other._input_covariances[key], alpha=1 - beta
+                )
+            for key in self._gradient_covariances.keys():
+                self._gradient_covariances[key].mul_(beta).add_(
+                    other._gradient_covariances[key], alpha=1 - beta
+                )
+
+        self._reset_matrix_properties()
