@@ -11,6 +11,8 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from torch.nn.functional import unfold
 from torch.nn.modules.utils import _pair
 
+from curvlinops.weighted_ce_loss import CrossEntropyLossWeighted
+
 
 def loss_hessian_matrix_sqrt(
     output_one_datum: Tensor,
