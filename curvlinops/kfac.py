@@ -40,6 +40,7 @@ from torch.nn import (
 from torch.utils.hooks import RemovableHandle
 
 from curvlinops._torch_base import CurvatureLinearOperator
+from curvlinops.weighted_ce_loss import CrossEntropyLossWeighted
 from curvlinops.kfac_utils import (
     extract_averaged_patches,
     extract_patches,
@@ -151,7 +152,7 @@ class KFACLinearOperator(CurvatureLinearOperator):
         SELF_ADJOINT: Whether the operator is self-adjoint. ``True`` for KFAC.
     """
 
-    _SUPPORTED_LOSSES = (MSELoss, CrossEntropyLoss, BCEWithLogitsLoss)
+    _SUPPORTED_LOSSES = (MSELoss, CrossEntropyLoss, BCEWithLogitsLoss, CrossEntropyLossWeighted)
     _SUPPORTED_MODULES = (Linear, Conv2d)
     _SUPPORTED_FISHER_TYPE: FisherType = FisherType
     _SUPPORTED_KFAC_APPROX: KFACType = KFACType
@@ -160,7 +161,7 @@ class KFACLinearOperator(CurvatureLinearOperator):
     def __init__(
         self,
         model_func: Module,
-        loss_func: Union[MSELoss, CrossEntropyLoss, BCEWithLogitsLoss],
+        loss_func: Union[MSELoss, CrossEntropyLoss, BCEWithLogitsLoss, CrossEntropyLossWeighted],
         params: List[Parameter],
         data: Iterable[Tuple[Union[Tensor, MutableMapping], Tensor]],
         progressbar: bool = False,
@@ -312,14 +313,16 @@ class KFACLinearOperator(CurvatureLinearOperator):
         """
         if num_per_example_loss_terms is None:
             # Determine the number of per-example loss terms
-            num_loss_terms = sum(
-                (
-                    y.numel()
-                    if isinstance(self._loss_func, CrossEntropyLoss)
-                    else y.shape[:-1].numel()
-                )
-                for (_, y) in self._loop_over_data(desc="_num_per_example_loss_terms")
-            )
+            num_loss_terms = 0
+            for _, y in self._loop_over_data(desc="_num_per_example_loss_terms"):
+                if isinstance(self._loss_func, CrossEntropyLoss):
+                    num_loss_terms += y.numel()
+                elif isinstance(self._loss_func, CrossEntropyLossWeighted):
+                    # y has shape (batch_size, 2) where [:, 0] is labels, [:, 1] is data_idx
+                    num_loss_terms += y.shape[0]
+                else:
+                    num_loss_terms += y.shape[:-1].numel()
+
             if num_loss_terms % self._N_data != 0:
                 raise ValueError(
                     "The number of loss terms must be divisible by the number of data "
@@ -532,7 +535,10 @@ class KFACLinearOperator(CurvatureLinearOperator):
         Returns:
             The rearranged output and target.
         """
-        if isinstance(self._loss_func, CrossEntropyLoss):
+        if isinstance(self._loss_func, CrossEntropyLossWeighted):
+            # For weighted CE, y has shape (batch_size, 2) and should not be rearranged
+            return output, y
+        elif isinstance(self._loss_func, CrossEntropyLoss):
             output = rearrange(output, "batch c ... -> (batch ...) c")
             y = rearrange(y, "batch ... -> (batch ...)")
         else:
@@ -584,13 +590,22 @@ class KFACLinearOperator(CurvatureLinearOperator):
                 f"Got {output.ndim=} and {y.ndim=}."
             )
 
+        # Extract data indices for weighted CE if needed
+        if isinstance(self._loss_func, CrossEntropyLossWeighted):
+            labels, data_idx = y.split([1, 1], dim=1)
+            labels = labels.squeeze(1)
+            data_idx = data_idx.squeeze(1)
+            y_for_hessian = labels  # For TYPE2, use labels only
+        else:
+            y_for_hessian = y
+
         if self._fisher_type == FisherType.TYPE2:
             # Compute per-sample Hessian square root, then concatenate over samples.
             # Result has shape `(batch_size, num_classes, num_classes)`
             hessian_sqrts = stack(
                 [
                     loss_hessian_matrix_sqrt(out.detach(), target, self._loss_func)
-                    for out, target in zip(output.split(1), y.split(1))
+                    for out, target in zip(output.split(1), y_for_hessian.split(1))
                 ]
             )
 
@@ -614,8 +629,35 @@ class KFACLinearOperator(CurvatureLinearOperator):
         elif self._fisher_type == FisherType.MC:
             for mc in range(self._mc_samples):
                 y_sampled = self.draw_label(output)
-                loss = self._loss_func(output, y_sampled)
-                loss = self._maybe_adjust_loss_scale(loss, output)
+                
+                if isinstance(self._loss_func, CrossEntropyLossWeighted):
+                    # Combine sampled labels with data indices
+                    y_sampled_combined = stack([y_sampled, data_idx], dim=1)
+                    
+                    # Compute loss with sqrt(weight) scaling for KFAC
+                    # The normal loss is 1/N * sum_i sigma(v_i) * loss(f(x_i), y_i)
+                    # KFAC's pseudo-loss is 1/sqrt(N) * sum_i sqrt(sigma(v_i)) * loss(f(x_i), y_i)
+                    original_reduction = self._loss_func.reduction
+                    self._loss_func.reduction = "none"
+                    loss_unreduced = self._loss_func(output, y_sampled_combined)
+                    self._loss_func.reduction = original_reduction
+                    
+                    # Apply sqrt scaling to weights
+                    eps = 1e-8
+                    sigma = self._loss_func.data_weights[data_idx].clamp(min=eps, max=1.0)
+                    loss_scaled = loss_unreduced / sigma.sqrt()
+                    
+                    # Apply reduction
+                    if self._loss_func.reduction == "mean":
+                        loss = loss_scaled.mean()
+                    elif self._loss_func.reduction == "sum":
+                        loss = loss_scaled.sum()
+                    else:
+                        raise ValueError(f"Unsupported reduction: {self._loss_func.reduction}")
+                else:
+                    loss = self._loss_func(output, y_sampled)
+                    loss = self._maybe_adjust_loss_scale(loss, output)
+                
                 grad(loss, self._params, retain_graph=mc != self._mc_samples - 1)
 
         elif self._fisher_type == FisherType.EMPIRICAL:
@@ -681,7 +723,7 @@ class KFACLinearOperator(CurvatureLinearOperator):
             )
             return output.clone().detach() + perturbation
 
-        elif isinstance(self._loss_func, CrossEntropyLoss):
+        elif isinstance(self._loss_func, (CrossEntropyLoss, CrossEntropyLossWeighted)):
             probs = output.softmax(dim=1)
             labels = probs.multinomial(
                 num_samples=1, generator=self._generator
@@ -1063,6 +1105,7 @@ class KFACLinearOperator(CurvatureLinearOperator):
             MSELoss: "MSELoss",
             CrossEntropyLoss: "CrossEntropyLoss",
             BCEWithLogitsLoss: "BCEWithLogitsLoss",
+            CrossEntropyLossWeighted: "CrossEntropyLossWeighted",
         }[type(self._loss_func)]
         return {
             # Model and loss function
@@ -1129,6 +1172,7 @@ class KFACLinearOperator(CurvatureLinearOperator):
             "MSELoss": MSELoss,
             "CrossEntropyLoss": CrossEntropyLoss,
             "BCEWithLogitsLoss": BCEWithLogitsLoss,
+            "CrossEntropyLossWeighted": CrossEntropyLossWeighted,
         }[state_dict["loss_type"]]
         if not isinstance(self._loss_func, loss_func_type):
             raise ValueError(
@@ -1188,11 +1232,18 @@ class KFACLinearOperator(CurvatureLinearOperator):
         Returns:
             Linear operator of KFAC approximation.
         """
-        loss_func = {
-            "MSELoss": MSELoss,
-            "CrossEntropyLoss": CrossEntropyLoss,
-            "BCEWithLogitsLoss": BCEWithLogitsLoss,
-        }[state_dict["loss_type"]](reduction=state_dict["loss_reduction"])
+        if state_dict["loss_type"] == "CrossEntropyLossWeighted":
+            # For CrossEntropyLossWeighted, we need num_data from state_dict
+            loss_func = CrossEntropyLossWeighted(
+                num_data=state_dict["num_data"],
+                reduction=state_dict["loss_reduction"]
+            )
+        else:
+            loss_func = {
+                "MSELoss": MSELoss,
+                "CrossEntropyLoss": CrossEntropyLoss,
+                "BCEWithLogitsLoss": BCEWithLogitsLoss,
+            }[state_dict["loss_type"]](reduction=state_dict["loss_reduction"])
         kfac = cls(
             model_func,
             loss_func,
