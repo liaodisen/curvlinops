@@ -248,7 +248,7 @@ class KFACLinearOperator(CurvatureLinearOperator):
             ValueError: If ``fisher_type != FisherType.MC`` and ``mc_samples != 1``.
             ValueError: If ``X`` is not a tensor and ``batch_size_fn`` is not specified.
         """
-        if not isinstance(loss_func, self._SUPPORTED_LOSSES):
+        if fisher_type != FisherType.EMPIRICAL and not isinstance(loss_func, self._SUPPORTED_LOSSES):
             raise ValueError(
                 f"Invalid loss: {loss_func}. Supported: {self._SUPPORTED_LOSSES}."
             )
@@ -320,8 +320,10 @@ class KFACLinearOperator(CurvatureLinearOperator):
                 elif isinstance(self._loss_func, CrossEntropyLossWeighted):
                     # y has shape (batch_size, 2) where [:, 0] is labels, [:, 1] is data_idx
                     num_loss_terms += y.shape[0]
-                else:
+                elif isinstance(self._loss_func, MSELoss):
                     num_loss_terms += y.shape[:-1].numel()
+                else:
+                    num_loss_terms += y.numel()
 
             if num_loss_terms % self._N_data != 0:
                 raise ValueError(
@@ -541,9 +543,12 @@ class KFACLinearOperator(CurvatureLinearOperator):
         elif isinstance(self._loss_func, CrossEntropyLoss):
             output = rearrange(output, "batch c ... -> (batch ...) c")
             y = rearrange(y, "batch ... -> (batch ...)")
+        elif isinstance(self._loss_func, MSELoss):
+            output = rearrange(output, "batch ... -> (batch ...)")
+            y = rearrange(y, "batch ... -> (batch ...)")
         else:
             output = rearrange(output, "batch ... c -> (batch ...) c")
-            y = rearrange(y, "batch ... c -> (batch ...) c")
+            y = rearrange(y, "batch ... -> (batch ...)")
         return output, y
 
     def _maybe_adjust_loss_scale(self, loss: Tensor, output: Tensor) -> Tensor:
